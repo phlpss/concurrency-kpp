@@ -15,13 +15,17 @@ public class TransactionUI extends JFrame {
 
     private final JTable transactionTable;
     private final DefaultTableModel tableModel;
-    private final TransactionProcessor processor;
+    private TransactionProcessor processor;
     private final JPanel timingPanel;
     private final Map<String, JLabel> threadTimeLabels = new ConcurrentHashMap<>();
     private final JLabel recoveredTransactionsLabel;
     private final JLabel totalTransactionsLabel = new JLabel("Total: 0");
     private final JLabel completedTransactionsLabel = new JLabel("Completed: 0");
     private final JLabel failedTransactionsLabel = new JLabel("Failed: 0");
+    private JButton setThreadsButton;
+    private JTextField threadCountField;
+    private boolean threadPoolConfigured = false;
+
 
     public TransactionUI() {
         setTitle("Transaction Processing System");
@@ -38,12 +42,6 @@ public class TransactionUI extends JFrame {
         // Add components to main layout
         JPanel mainPanel = createMainPanel();
         add(mainPanel);
-
-        // Recover and display transactions
-        DatabaseManager databaseManager = new DatabaseManager();
-        var recoveredTransactions = databaseManager.recoverTransactions();
-        recoveredTransactions.forEach(this::addTransactionToTable);
-        processor = new TransactionProcessor(this, recoveredTransactions);
 
         // Start periodic statistics updates
         startStatisticsUpdater();
@@ -105,6 +103,33 @@ public class TransactionUI extends JFrame {
         panel.add(new JLabel("Number of Transactions:"));
         panel.add(countField);
         panel.add(generateButton);
+
+        setThreadsButton = new JButton("Set Thread Pool Size");
+        threadCountField = new JTextField(10);
+
+        setThreadsButton.addActionListener(e -> {
+            if (threadPoolConfigured) {
+                showMessage("Thread pool size already configured!", "Warning", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                int threadCount = Integer.parseInt(threadCountField.getText());
+                if (threadCount <= 0) {
+                    showMessage("Please enter a positive number", "Invalid Input", JOptionPane.WARNING_MESSAGE);
+                    return;
+                }
+                this.processor = new TransactionProcessor(this, threadCount);
+                threadPoolConfigured = true;
+                setThreadsButton.setEnabled(false); // Disable after first use
+                threadCountField.setEnabled(false); // Disable text field
+            } catch (NumberFormatException ex) {
+                showMessage("Please enter a valid number", "Invalid Input", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        panel.add(new JLabel("Thread Pool Size:"));
+        panel.add(threadCountField);
+        panel.add(setThreadsButton);
 
         return panel;
     }
@@ -187,14 +212,14 @@ public class TransactionUI extends JFrame {
         });
     }
 
-    public void updateProcessingTimes(Map<String, Long> threadTimes, long totalTime) {
+    public void updateProcessingTimes(Map<String, Long> threadTimes, Map<String, String> threadStates, long totalTime) {
         SwingUtilities.invokeLater(() -> {
             threadTimes.forEach((threadName, time) -> threadTimeLabels.computeIfAbsent(threadName, key -> {
                 JLabel label = new JLabel();
                 timingPanel.add(label);
                 timingPanel.revalidate();
                 return label;
-            }).setText(String.format("%s: %d ms", threadName, time)));
+            }).setText(String.format("%s [%s]: %d ms", threadName, threadStates.get(threadName), time)));
 
             JLabel totalLabel = threadTimeLabels.get("Total");
             if (totalLabel != null) {
@@ -221,6 +246,11 @@ public class TransactionUI extends JFrame {
         }));
         timer.start();
     }
+
+    private void showMessage(String message, String title, int messageType) {
+        JOptionPane.showMessageDialog(this, message, title, messageType);
+    }
+
 
     private void showErrorDialog(String message) {
         JOptionPane.showMessageDialog(this, message, "Invalid Input", JOptionPane.WARNING_MESSAGE);
