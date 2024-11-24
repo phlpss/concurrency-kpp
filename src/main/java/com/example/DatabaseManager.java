@@ -27,8 +27,8 @@ public class DatabaseManager {
         config.setJdbcUrl(dbUrl);
         config.setUsername(username);
         config.setPassword(password);
-        config.setMaximumPoolSize(10); // Adjust based on app requirements
-        config.setMinimumIdle(2);
+        config.setMaximumPoolSize(100); // Adjust based on app requirements
+        config.setMinimumIdle(50);
         config.setIdleTimeout(30000);
         config.setConnectionTimeout(30000);
         config.setMaxLifetime(1800000);
