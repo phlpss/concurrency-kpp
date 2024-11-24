@@ -7,7 +7,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class TransactionUI extends JFrame {
@@ -17,7 +16,6 @@ public class TransactionUI extends JFrame {
     private final JTable transactionTable;
     private final DefaultTableModel tableModel;
     private final TransactionProcessor processor;
-    private final Random random = new Random();
     private final JPanel timingPanel;
     private final Map<String, JLabel> threadTimeLabels = new ConcurrentHashMap<>();
     private final JLabel recoveredTransactionsLabel;
