@@ -2,9 +2,9 @@ package com.example;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 
+import java.math.BigDecimal;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,8 +13,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DatabaseManager {
     private final HikariDataSource dataSource;
+    String dbUrl = "jdbc:postgresql://localhost:5432/Transactions";
+    String username = "sa";
+    String password = "pa";
 
-    public DatabaseManager(String dbUrl, String username, String password) {
+    public DatabaseManager() {
         this.dataSource = configureDataSource(dbUrl, username, password);
         initDatabase();
     }
@@ -66,7 +69,7 @@ public class DatabaseManager {
 
             while (rs.next()) {
                 UUID id = rs.getObject("id", UUID.class);
-                double amount = rs.getDouble("amount");
+                BigDecimal amount = rs.getBigDecimal("amount");
                 Timestamp createdAt = rs.getTimestamp("created_at");
                 String status = rs.getString("status");
                 int retryCount = rs.getInt("retry_count");
@@ -98,7 +101,7 @@ public class DatabaseManager {
             conn.setAutoCommit(false); // Enable transaction management
 
             pstmt.setObject(1, transaction.getId());
-            pstmt.setDouble(2, transaction.getAmount());
+            pstmt.setBigDecimal(2, transaction.getAmount());
             pstmt.setTimestamp(3, Timestamp.valueOf(transaction.getCreatedAt()));
             pstmt.setString(4, transaction.getStatus().name());
             pstmt.setInt(5, transaction.getRetryCount());

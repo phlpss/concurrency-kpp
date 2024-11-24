@@ -1,5 +1,6 @@
 package com.example;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -8,6 +9,10 @@ import java.util.Random;
 import java.util.concurrent.*;
 
 class TransactionProcessor {
+    private static final int MAX_THREADS = 5;
+    private static final int RETRY_THREAD_COUNT = 2;
+    private static final int RETRY_DELAY_MS = 5000;
+
     private final PriorityBlockingQueue<Transaction> mainQueue;
     private final PriorityBlockingQueue<Transaction> retryQueue;
     private final ExecutorService mainExecutor;
@@ -16,63 +21,53 @@ class TransactionProcessor {
     private final TransactionUI gui;
     private final Map<String, Long> threadProcessingTimes;
     private final LocalDateTime systemStartTime;
-    private final int MAX_THREADS = 5;
 
-    public TransactionProcessor(TransactionUI ui, List<Transaction> recoveredTransactions, String dbUrl, String username, String password) {
-
+    public TransactionProcessor(TransactionUI ui, List<Transaction> recoveredTransactions) {
         this.mainQueue = new PriorityBlockingQueue<>();
         this.retryQueue = new PriorityBlockingQueue<>();
-        this.mainExecutor = Executors.newFixedThreadPool(MAX_THREADS, new ThreadFactory() {
-            private int threadCount = 1;
-
-            @Override
-            public Thread newThread(Runnable r) {
-                Thread thread = new Thread(r);
-                thread.setName("MainProcessor-" + threadCount++);
-                return thread;
-            }
-        });
-        this.retryExecutor = Executors.newFixedThreadPool(2, new ThreadFactory() {
-            private int threadCount = 1;
-
-            @Override
-            public Thread newThread(Runnable r) {
-                Thread thread = new Thread(r);
-                thread.setName("RetryProcessor-" + threadCount++);
-                return thread;
-            }
-        });
+        this.mainExecutor = createExecutor("MainProcessor", MAX_THREADS);
+        this.retryExecutor = createExecutor("RetryProcessor", RETRY_THREAD_COUNT);
+        this.dbManager = new DatabaseManager();
         this.gui = ui;
-        this.dbManager = new DatabaseManager(dbUrl, username, password);
         this.threadProcessingTimes = new ConcurrentHashMap<>();
         this.systemStartTime = LocalDateTime.now();
 
-        for (Transaction t : recoveredTransactions) {
-            if (t.getStatus() != TransactionStatus.RETRY) {
-                mainQueue.add(t);
-            } else {
-                retryQueue.add(t);
-            }
-            dbManager.updateTransactionStatus(t);
-        }
-
-        // Start processing threads
+        initializeQueues(recoveredTransactions);
         startProcessing();
     }
 
+    private ExecutorService createExecutor(String threadNamePrefix, int threadCount) {
+        return Executors.newFixedThreadPool(threadCount, new ThreadFactory() {
+            private int threadCounter = 1;
+
+            @Override
+            public Thread newThread(Runnable r) {
+                return new Thread(r, threadNamePrefix + "-" + threadCounter++);
+            }
+        });
+    }
+
+    private void initializeQueues(List<Transaction> transactions) {
+        for (Transaction transaction : transactions) {
+            if (transaction.getStatus() == TransactionStatus.RETRY) {
+                retryQueue.add(transaction);
+            } else {
+                mainQueue.add(transaction);
+            }
+            dbManager.updateTransactionStatus(transaction);
+        }
+    }
+
     public void startProcessing() {
-        // Start main queue processors
         for (int i = 0; i < MAX_THREADS; i++) {
             mainExecutor.submit(new QueueProcessor(mainQueue, false));
         }
-
-        // Start retry queue processors
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < RETRY_THREAD_COUNT; i++) {
             retryExecutor.submit(new QueueProcessor(retryQueue, true));
         }
     }
 
-    private class QueueProcessor implements Runnable {
+    class QueueProcessor implements Runnable {
         private final PriorityBlockingQueue<Transaction> queue;
         private final boolean isRetry;
 
@@ -85,12 +80,11 @@ class TransactionProcessor {
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
-                    // Take the highest priority transaction
                     Transaction transaction = queue.take();
                     if (isRetry) {
-                        Thread.sleep(5000);
+                        Thread.sleep(RETRY_DELAY_MS);
                     }
-                    processTransaction(transaction, isRetry);
+                    processTransaction(transaction);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
@@ -99,14 +93,13 @@ class TransactionProcessor {
         }
     }
 
-    private void processTransaction(Transaction transaction, boolean isRetry) {
+    private void processTransaction(Transaction transaction) {
         String threadName = Thread.currentThread().getName();
         transaction.startProcessing(threadName);
 
         try {
             transaction.setStatus(TransactionStatus.PROCESSING);
-            dbManager.updateTransactionStatus(transaction);
-            gui.updateTransactionStatus(transaction);
+            updateTransactionInSystem(transaction);
 
             simulateProcessing(transaction);
 
@@ -114,26 +107,16 @@ class TransactionProcessor {
             transaction.endProcessing();
 
             threadProcessingTimes.merge(threadName, transaction.getProcessingTime(), Long::sum);
-
-            dbManager.updateTransactionStatus(transaction);
-            gui.updateTransactionStatus(transaction);
-            gui.updateProcessingTimes(getThreadProcessingTimes(), getTotalProcessingTime());
-
+            updateTransactionInSystem(transaction);
         } catch (Exception e) {
             handleTransactionFailure(transaction);
         }
     }
 
-    public void addTransaction(double amount) {
-        Transaction transaction = new Transaction(amount);
-        dbManager.saveTransaction(transaction);
-        mainQueue.add(transaction);
-        gui.addTransactionToTable(transaction);
-    }
-
     private void simulateProcessing(Transaction transaction) throws Exception {
         Random random = new Random();
         double errorProbability = transaction.getRetryCount() > 0 ? 0.6 : 0.9;
+
         if (random.nextDouble() < errorProbability) {
             throw new Exception("Processing failed");
         }
@@ -141,18 +124,33 @@ class TransactionProcessor {
     }
 
     private void handleTransactionFailure(Transaction transaction) {
-        if (transaction.isCanRetry()) {
+        if (transaction.canRetry()) {
             transaction.incrementRetryCount();
             transaction.setStatus(TransactionStatus.RETRY);
             retryQueue.add(transaction);
         } else {
             transaction.setStatus(TransactionStatus.FAILED);
         }
+        finalizeTransaction(transaction);
+    }
+
+    private void finalizeTransaction(Transaction transaction) {
         transaction.endProcessing();
         threadProcessingTimes.merge(transaction.getProcessingThread(), transaction.getProcessingTime(), Long::sum);
+        updateTransactionInSystem(transaction);
+    }
+
+    private void updateTransactionInSystem(Transaction transaction) {
         dbManager.updateTransactionStatus(transaction);
         gui.updateTransactionStatus(transaction);
         gui.updateProcessingTimes(getThreadProcessingTimes(), getTotalProcessingTime());
+    }
+
+    public void addTransaction(BigDecimal amount) {
+        Transaction transaction = new Transaction(amount);
+        dbManager.saveTransaction(transaction);
+        mainQueue.add(transaction);
+        gui.addTransactionToTable(transaction);
     }
 
     public Map<String, Long> getThreadProcessingTimes() {
@@ -161,21 +159,5 @@ class TransactionProcessor {
 
     public long getTotalProcessingTime() {
         return Duration.between(systemStartTime, LocalDateTime.now()).toMillis();
-    }
-
-    public void shutdown() {
-        mainExecutor.shutdown();
-        retryExecutor.shutdown();
-        dbManager.close(); // Close the database connection pool
-        try {
-            if (!mainExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                mainExecutor.shutdownNow();
-            }
-            if (!retryExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                retryExecutor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

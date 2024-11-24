@@ -1,8 +1,12 @@
 package com.example;
 
 import lombok.Data;
+import org.jetbrains.annotations.NotNull;
+
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.UUID;
 
 enum TransactionStatus {
@@ -12,7 +16,7 @@ enum TransactionStatus {
 @Data
 public class Transaction implements Comparable<Transaction> {
     private final UUID id;
-    private final double amount;
+    private final BigDecimal amount;
     private LocalDateTime createdAt;
     private TransactionStatus status;
     private int retryCount;
@@ -21,8 +25,7 @@ public class Transaction implements Comparable<Transaction> {
     private String processingThread;
     private static final int MAX_RETRY_COUNT = 3;
 
-    // Original constructor for new transactions
-    public Transaction(double amount) {
+    public Transaction(BigDecimal amount) {
         this.id = UUID.randomUUID();
         this.amount = amount;
         this.createdAt = LocalDateTime.now();
@@ -31,7 +34,7 @@ public class Transaction implements Comparable<Transaction> {
         this.processingTime = 0;
     }
 
-    public Transaction(UUID transactionId, double amount) {
+    public Transaction(UUID transactionId, BigDecimal amount) {
         this.id = transactionId;
         this.amount = amount;
         this.createdAt = LocalDateTime.now();
@@ -54,7 +57,7 @@ public class Transaction implements Comparable<Transaction> {
         }
     }
 
-    public boolean isCanRetry() {
+    public boolean canRetry() {
         return retryCount < MAX_RETRY_COUNT;
     }
 
@@ -62,16 +65,10 @@ public class Transaction implements Comparable<Transaction> {
         this.retryCount++;
     }
 
-    // Compare transactions for priority queue ordering
     @Override
-    public int compareTo(Transaction other) {
-        // Higher amounts have higher priority (negative for descending order)
-        int amountComparison = Double.compare(other.amount, this.amount);
-        if (amountComparison != 0) {
-            return amountComparison;
-        }
-        // If amounts are equal, older transactions have higher priority
-        return this.createdAt.compareTo(other.createdAt);
+    public int compareTo(@NotNull Transaction other) {
+        return Comparator.comparing(Transaction::getAmount).thenComparing(Transaction::getCreatedAt)
+                .compare(this, other);
     }
 
     public long getProcessingTime() {
